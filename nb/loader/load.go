@@ -1,5 +1,8 @@
 package loader
 
+// TODO: Use a CLI flag for this
+// TODO: Refactor the errors
+
 import (
 	"encoding/csv"
 	"encoding/json"
@@ -7,7 +10,12 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"io"
+	"fmt"
+	"strings"
 )
+
+var ChunkSize int = 5
 
 type Dataset struct {
 	Features [][][]int32
@@ -23,34 +31,32 @@ type FreqCounts []FreqCount
 // ReadChunk returns a slice of a Dataset of chunk size `size`.
 // Assumes dataset is in CSV format, and that features and classes
 // are defined in a specific way
-func (dataset *Dataset) ReadChunk() (Dataset, error) {
+func (dataset *Dataset) ReadChunk(reader *csv.Reader, ChunkSize int) (Dataset, error) {
 	var features [][][]int32
 	var classes []uint16
-	var chunkSize int = 5 // TODO: Put this somewhere where it can be set by the user
 
-	file, err := os.Open("../data.csv")
-	if err != nil {
-		log.Fatal(err)
-	}
-	reader := csv.NewReader(file)
-	for i := 0; i < chunkSize; i++ {
+	for i := 0; i < ChunkSize; i++ {
 		var feature [][]int32
 		record, err := reader.Read()
 		log.Println("Read record ", record)
 		if err != nil {
-			log.Fatal(err)
+			if err == io.EOF {
+				log.Println("Features at EOF", features)
+				return Dataset{features, classes}, err
+			}
+			log.Println(err)
 			return Dataset{}, err
 		}
 		strFeature, strClass := record[0], record[1]
 
 		err = json.Unmarshal([]byte(strFeature), &feature)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 			return Dataset{}, err
 		}
 		class, err := strconv.Atoi(strClass)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 			return Dataset{}, err
 		}
 		log.Println("Appending to features:", feature)
@@ -66,37 +72,28 @@ func (dataset *Dataset) ReadChunk() (Dataset, error) {
 func Load() (FreqCount, error) {
 	var dataChunk Dataset = Dataset{}
 
-	// TODO: Use a CLI flag for this
-
-	// TODO: Refactor the errors
-
-	// For each ChunkSize..
-	// 1. Read ChunkSize lines. If there's less lines than a chunk,
-	// read that many lines instead
-	// 2. Instantiate a Dataset object from those lines
-	// 3. Get the freq counts of feature per class
-	// 4. Send to channel
-	// 5. Add together any freq counts any time the channel
-	// encounters more than 1 at a time. It needs to be some
-	// data type that can be added count-wise.
-
-	// Each time a tokenId is encountered it checks if HashMap
-	// has its tokenId as a key. If it does, it appends to it.
-	// If not, it creates a new one and stores the freq count
+	file, err := os.Open("../data.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+	reader := csv.NewReader(file)
 
 	var freqCounts FreqCounts
-	for i := 0; i < 5; i++ { // TODO: What should the last value for i be?
-		dataChunk, err := dataChunk.ReadChunk()
-		log.Println("Instantiated dataChunk", dataChunk)
-		if err != nil {
-			return FreqCount{}, err
+	for {
+		dataChunk, readErr := dataChunk.ReadChunk(reader, ChunkSize)
+		if (readErr != nil && readErr != io.EOF) {
+			log.Fatal(err)
 		}
+		log.Println("Instantiated dataChunk", dataChunk)
 		Counts, err := dataChunk.ToCounts()
 		log.Println("Counts are ", Counts)
 		if err != nil {
 			log.Fatal(err)
 		}
 		freqCounts = append(freqCounts, Counts)
+		if readErr == io.EOF {
+			break
+		}
 	}
 	log.Println("freqCounts: ", freqCounts)
 
@@ -108,32 +105,40 @@ func Load() (FreqCount, error) {
 	return Combined, nil
 }
 
+
+const separator = "|" // Signifying "such that", such as P(w|c)
+
+// ToCounts converts a Dataset into a FreqCount, which gives the
+// counts of features per class
 func (dataset *Dataset) ToCounts() (FreqCount, error) {
 	mapper := make(map[string]int)
-	log.Println(dataset.Classes)
-	for i := 0; i < len(dataset.Classes); i++ {
-		log.Println(dataset.Classes[i])
+
+	for i, class := range dataset.Classes {
+		sClass := fmt.Sprintf("%d", class)
 		for _, featureList := range dataset.Features[i] {
 			for _, feature := range featureList {
-				var label string = strconv.Itoa(int(dataset.Classes[i])) + "-" + strconv.Itoa(int(feature))
-				mapper[label] += 1
+				sFeature := fmt.Sprintf("%d", feature)
+				mapper[strings.Join([]string{sClass, sFeature}, separator)]++
+				mapper[sClass]++
 			}
-
 		}
 	}
+
 	return FreqCount{CountMap: mapper}, nil
 }
 
+// Combine concatenates a FreqCounts struct into a single
+// FreqCount with all of the counts summed up per feature
 func (freqCounts FreqCounts) Combine() (FreqCount, error) {
 	if len(freqCounts) == 0 {
-		return FreqCount{}, errors.New("no frequency counts to combine")
+		return FreqCount{}, errors.New("No frequency counts to combine")
 	}
 
 	result := FreqCount{CountMap: make(map[string]int)}
 
 	for _, freqCount := range freqCounts {
-		for word, _ := range freqCount.CountMap {
-			result.CountMap[word] += freqCount.CountMap[word]
+		for word, count := range freqCount.CountMap {
+			result.CountMap[word] += count
 		}
 	}
 
