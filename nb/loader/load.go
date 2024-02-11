@@ -32,6 +32,7 @@ type FileLoader struct {
 type FreqCounts []FreqCount
 
 const filePath string = "../data.csv"
+const ChunkSize int = 3
 
 func NewFileLoader(filePath string) (*FileLoader, error) {
 	file, err := os.Open(filePath)
@@ -135,7 +136,6 @@ func (dataset *Dataset) ReadChunk(dataFile *FileLoader, ChunkSize int, Pos int) 
 // Load loads the dataset from a CSV file and reads a chunk of it.
 func Load() (FreqCount, error) {
 	var freqCounts FreqCounts
-	var ChunkSize = 3
 	var wg sync.WaitGroup
 
 	dataFile, err := NewFileLoader(filePath)
