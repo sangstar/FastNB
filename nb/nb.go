@@ -1,10 +1,14 @@
 package main
 
 import (
-	"fastnb/nb/loader"
 	"fmt"
+	"github.com/sangstar/FastNB/loader"
 )
 
 func main() {
-	fmt.Println(loader.Load())
+	Probs, err := loader.Load()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(Probs)
 }
